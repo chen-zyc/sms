@@ -1,13 +1,8 @@
 package sms
 
 import (
-	"errors"
 	"fmt"
 	"github.com/uber-go/zap"
-)
-
-var (
-	ErrNoRequestToSend = errors.New("no request to send")
 )
 
 type SMSReq struct {
