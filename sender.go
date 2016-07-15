@@ -2,7 +2,6 @@ package sms
 
 import (
 	"github.com/uber-go/zap"
-	"strings"
 )
 
 type Sender interface {
@@ -15,20 +14,16 @@ func (sf SenderFunc) Send(ctx *Context, req *SMSReq, resp *SMSResp) {
 	sf(ctx, req, resp)
 }
 
-type mockSender struct{}
+type MockSender struct{}
 
-func (ms *mockSender) Send(ctx *Context, req *SMSReq, resp *SMSResp) {
-	logger := ctx.Logger.With(
+func (ms *MockSender) Send(ctx *Context, req *SMSReq, resp *SMSResp) {
+	ctx.Logger.Debug(
+		"send sms",
 		zap.String("caller", caller()),
 		zap.String("category", req.Category),
 		zap.String("template", req.TemplateID),
+		zap.Object("args", req.Args),
+		zap.Object("phoneNumbers", req.PhoneNumbers),
 	)
-
-	for i, pn := range req.PhoneNumbers {
-		logger.Debug("send sms",
-			zap.String("phone", pn),
-			zap.String("values", strings.Join(req.Values[i], ",")),
-		)
-	}
 	resp.Code = CodeSuccess
 }

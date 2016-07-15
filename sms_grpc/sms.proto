@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package sms_grpc;
+
+message SMSReq {
+    string category = 1;
+    string templateID = 2;
+    repeated string phoneNumbers = 3;
+    repeated string args = 4;
+}
+
+message FailReq {
+    string phoneNumber = 1;
+    string failReason = 2;
+}
+
+message SMSResp {
+    int32 code = 1;
+    string id = 2;
+    string message = 3;
+    repeated FailReq fail = 4;
+}
+
+service SMSSender {
+    rpc Send (SMSReq) returns (SMSResp) {}
+}

@@ -2,6 +2,7 @@ package sms
 
 import (
 	"github.com/garyburd/redigo/redis"
+	"github.com/stretchr/testify/assert"
 	"github.com/uber-go/zap"
 	"strconv"
 	"sync"
@@ -36,32 +37,36 @@ func TestRateLimitFilterRedis_Filter(t *testing.T) {
 	pool := buildTestRedisPool()
 	defer pool.Close()
 
-	filter := NewRateLimitFilterRedis(pool, 3, 1)
+	filter := NewRateLimitFilterRedis(pool, 3, 1, 3*time.Second)
+	filter.KeyExpireSec = 5
+
 	ctx := &Context{
 		Logger: zap.NewJSON(),
 	}
 	ctx.Logger.SetLevel(zap.DebugLevel)
 
+	sucCount := 0
 	for i := 0; i < 5; i++ {
 		resp := &SMSResp{}
 		req := &SMSReq{
 			PhoneNumbers: []string{"123"},
-			Values: [][]string{
-				[]string{"v1"},
-			},
 		}
 		filter.Filter(ctx, req, resp)
-		t.Logf("req: %#v, resp: %#v", req, resp)
+		if len(resp.Fail) == 0 {
+			sucCount++
+		}
 	}
+
+	assert.Equal(t, 3, sucCount)
 }
 
 func TestRateLimitFilterRedis_Concurrence(t *testing.T) {
 	pool := buildTestRedisPool()
 	defer pool.Close()
 
-	filter := NewRateLimitFilterRedis(pool, 3, 1)
+	filter := NewRateLimitFilterRedis(pool, 3, 3, time.Second)
+	filter.KeyExpireSec = 3
 
-	start := time.Now()
 	sucCount := int64(0)
 	wg := &sync.WaitGroup{}
 	for i := 0; i < 20; i++ {
@@ -77,13 +82,10 @@ func TestRateLimitFilterRedis_Concurrence(t *testing.T) {
 			for i := 0; i < 500; i++ {
 				resp := &SMSResp{}
 				req := &SMSReq{
-					PhoneNumbers: []string{"123"},
-					Values: [][]string{
-						[]string{"v1"},
-					},
+					PhoneNumbers: []string{"124"},
 				}
 				filter.Filter(ctx, req, resp)
-				if len(req.PhoneNumbers) > 0 {
+				if len(resp.Fail) == 0 {
 					atomic.AddInt64(&sucCount, 1)
 				}
 			}
@@ -91,7 +93,7 @@ func TestRateLimitFilterRedis_Concurrence(t *testing.T) {
 	}
 	wg.Wait()
 
-	t.Logf("success count: %d, elapse %s", sucCount, time.Now().Sub(start).String())
+	assert.Equal(t, int64(3), sucCount)
 }
 
 // 116709 ns/op
@@ -99,7 +101,7 @@ func BenchmarkRateLimitFilterRedis_Filter(b *testing.B) {
 	pool := buildTestRedisPool()
 	defer pool.Close()
 
-	filter := NewRateLimitFilterRedis(pool, 1, 1)
+	filter := NewRateLimitFilterRedis(pool, 1, 1, time.Second)
 	ctx := &Context{
 		Logger: zap.NewJSON(),
 	}
@@ -110,10 +112,7 @@ func BenchmarkRateLimitFilterRedis_Filter(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		resp := &SMSResp{}
 		req := &SMSReq{
-			PhoneNumbers: []string{"123"},
-			Values: [][]string{
-				[]string{"v1"},
-			},
+			PhoneNumbers: []string{"125"},
 		}
 		filter.Filter(ctx, req, resp)
 	}
@@ -125,32 +124,39 @@ func TestRateLimitFilterRedisCounter_Filter(t *testing.T) {
 	pool := buildTestRedisPool()
 	defer pool.Close()
 
-	filter := NewRateLimitFilterRedisCounter(pool, 3, 1, func() string { return strconv.FormatInt(time.Now().Unix(), 10) })
+	filter := NewRateLimitFilterRedisCounter(pool, 3, 1)
+	filter.KeyFunc = func(req *SMSReq, i int) string {
+		return req.PhoneNumbers[i] + strconv.FormatInt(time.Now().Unix(), 10)
+	}
 	ctx := &Context{
 		Logger: zap.NewJSON(),
 	}
 	ctx.Logger.SetLevel(zap.DebugLevel)
 
+	sucCount := 0
 	for i := 0; i < 5; i++ {
 		resp := &SMSResp{}
 		req := &SMSReq{
 			PhoneNumbers: []string{"1234"},
-			Values: [][]string{
-				[]string{"v1"},
-			},
 		}
 		filter.Filter(ctx, req, resp)
-		t.Logf("req: %#v, resp: %#v", req, resp)
+		if len(resp.Fail) == 0 {
+			sucCount++
+		}
 	}
+
+	assert.Equal(t, 3, sucCount)
 }
 
 func TestRateLimitFilterRedisCounter_Concurrence(t *testing.T) {
 	pool := buildTestRedisPool()
 	defer pool.Close()
 
-	filter := NewRateLimitFilterRedisCounter(pool, 3, 1, func() string { return strconv.FormatInt(time.Now().Unix(), 10) })
+	filter := NewRateLimitFilterRedisCounter(pool, 3, 1)
+	filter.KeyFunc = func(req *SMSReq, i int) string {
+		return req.PhoneNumbers[i] + strconv.FormatInt(time.Now().Unix(), 10)
+	}
 
-	start := time.Now()
 	sucCount := int64(0)
 	wg := &sync.WaitGroup{}
 	for i := 0; i < 20; i++ {
@@ -166,13 +172,10 @@ func TestRateLimitFilterRedisCounter_Concurrence(t *testing.T) {
 			for i := 0; i < 10; i++ {
 				resp := &SMSResp{}
 				req := &SMSReq{
-					PhoneNumbers: []string{"123"},
-					Values: [][]string{
-						[]string{"v1"},
-					},
+					PhoneNumbers: []string{"1235"},
 				}
 				filter.Filter(ctx, req, resp)
-				if len(req.PhoneNumbers) > 0 {
+				if len(resp.Fail) == 0 {
 					atomic.AddInt64(&sucCount, 1)
 				}
 			}
@@ -180,7 +183,7 @@ func TestRateLimitFilterRedisCounter_Concurrence(t *testing.T) {
 	}
 	wg.Wait()
 
-	t.Logf("success count: %d, elapse %s", sucCount, time.Now().Sub(start).String())
+	assert.Equal(t, int64(3), sucCount)
 }
 
 // 53577 ns/op
@@ -188,7 +191,11 @@ func BenchmarkRateLimitFilterRedisCounter_Filter(b *testing.B) {
 	pool := buildTestRedisPool()
 	defer pool.Close()
 
-	filter := NewRateLimitFilterRedisCounter(pool, 3, 1, func() string { return strconv.FormatInt(time.Now().Unix(), 10) })
+	filter := NewRateLimitFilterRedisCounter(pool, 3, 1)
+	filter.KeyFunc = func(req *SMSReq, i int) string {
+		return req.PhoneNumbers[i] + strconv.FormatInt(time.Now().Unix(), 10)
+	}
+
 	ctx := &Context{
 		Logger: zap.NewJSON(),
 	}
@@ -199,10 +206,7 @@ func BenchmarkRateLimitFilterRedisCounter_Filter(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		resp := &SMSResp{}
 		req := &SMSReq{
-			PhoneNumbers: []string{"123"},
-			Values: [][]string{
-				[]string{"v1"},
-			},
+			PhoneNumbers: []string{"1236"},
 		}
 		filter.Filter(ctx, req, resp)
 	}

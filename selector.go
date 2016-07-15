@@ -7,7 +7,7 @@ import (
 )
 
 type Selector interface {
-	Select(category string) (sender Sender, errCode int, err error)
+	Select(category string) (sender Sender, errCode int32, err error)
 }
 
 type RandomSelector struct {
@@ -15,7 +15,7 @@ type RandomSelector struct {
 	sync.RWMutex
 }
 
-func (rs *RandomSelector) Select(category string) (sender Sender, errCode int, err error) {
+func (rs *RandomSelector) Select(category string) (sender Sender, errCode int32, err error) {
 	rs.RLock()
 	if senders, ok := rs.senders[category]; ok && len(senders) > 0 {
 		sender = senders[rand.Intn(len(senders))]

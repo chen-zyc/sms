@@ -46,16 +46,19 @@ func ResetFilters(category string, newFilters []Filter) {
 type RateLimitFilterRedis struct {
 	RedisPool    *redis.Pool
 	MaxTokens    int64
-	TokenPerSec  int64
+	Tokens       int64
+	PerSec       int64
 	MaxTryTimes  int
-	KeyExpireSec int // 键过期秒数
+	KeyExpireSec int                             // 键过期秒数
+	KeyFunc      func(req *SMSReq, i int) string // 键生成函数
 }
 
-func NewRateLimitFilterRedis(redisPool *redis.Pool, maxTokens, tokenPerSec int64) *RateLimitFilterRedis {
+func NewRateLimitFilterRedis(redisPool *redis.Pool, maxTokens, tokens int64, per time.Duration) *RateLimitFilterRedis {
 	return &RateLimitFilterRedis{
 		RedisPool:    redisPool,
 		MaxTokens:    maxTokens,
-		TokenPerSec:  tokenPerSec,
+		Tokens:       tokens,
+		PerSec:       int64(per.Seconds()),
 		MaxTryTimes:  5,
 		KeyExpireSec: 60,
 	}
@@ -70,10 +73,13 @@ func (rl *RateLimitFilterRedis) Filter(ctx *Context, req *SMSReq, resp *SMSResp)
 
 LOOP:
 	for i := 0; i < len(req.PhoneNumbers); i++ {
-		pn := req.PhoneNumbers[i]
+		key := req.PhoneNumbers[i]
+		if rl.KeyFunc != nil {
+			key = rl.KeyFunc(req, i)
+		}
 		var err error
 		for j := 0; j < rl.MaxTryTimes; j++ {
-			err = rl.checkLimit(ctx, pn, c)
+			err = rl.checkLimit(ctx, key, c)
 			if err == nil {
 				continue LOOP
 			}
@@ -87,7 +93,11 @@ LOOP:
 			}
 		}
 		// 超过最大次数还是有错误
-		rl.delPhone(req, resp, i, err.Error())
+		if err != nil {
+			rl.delPhone(req, resp, i, err.Error())
+		} else {
+			rl.delPhone(req, resp, i, "cann't acquire access,max try times:"+strconv.Itoa(rl.MaxTryTimes))
+		}
 		i--
 	}
 	return
@@ -99,12 +109,11 @@ func (rl *RateLimitFilterRedis) delPhone(req *SMSReq, resp *SMSResp, i int, reas
 		FailReason:  reason,
 	})
 	req.PhoneNumbers = append(req.PhoneNumbers[:i], req.PhoneNumbers[i+1:]...)
-	req.Values = append(req.Values[:i], req.Values[i+1:]...)
 }
 
 // 这种实现在高并发下也可以做到准确限速，缺点是执行的redis命令多，性能略低
-func (rl *RateLimitFilterRedis) checkLimit(ctx *Context, pn string, c redis.Conn) error {
-	reply, err := redis.String(c.Do("WATCH", pn))
+func (rl *RateLimitFilterRedis) checkLimit(ctx *Context, key string, c redis.Conn) error {
+	reply, err := redis.String(c.Do("WATCH", key))
 	if err != nil {
 		return err
 	}
@@ -112,7 +121,7 @@ func (rl *RateLimitFilterRedis) checkLimit(ctx *Context, pn string, c redis.Conn
 		return errors.New("exec WATCH reply not OK")
 	}
 
-	reply, err = redis.String(c.Do("GET", pn))
+	reply, err = redis.String(c.Do("GET", key))
 	if err != nil && err != redis.ErrNil {
 		return err
 	} else {
@@ -141,7 +150,7 @@ func (rl *RateLimitFilterRedis) checkLimit(ctx *Context, pn string, c redis.Conn
 
 	// sync
 	diff := nowSec - lastSec
-	tokensToPut := rl.TokenPerSec * diff
+	tokensToPut := rl.Tokens * diff / rl.PerSec
 	if tokensToPut > 0 {
 		tokens += tokensToPut
 		if tokens > rl.MaxTokens {
@@ -163,8 +172,8 @@ func (rl *RateLimitFilterRedis) checkLimit(ctx *Context, pn string, c redis.Conn
 		return errors.New("exec MULTI reply not OK")
 	}
 
-	c.Do("SET", pn, fmt.Sprintf("%d,%d", lastSec, tokens))
-	c.Do("EXPIRE", pn, rl.KeyExpireSec)
+	c.Do("SET", key, fmt.Sprintf("%d,%d", lastSec, tokens))
+	c.Do("EXPIRE", key, rl.KeyExpireSec)
 	replyIntf, err := c.Do("EXEC")
 
 	if err != nil {
@@ -184,15 +193,14 @@ func (rl *RateLimitFilterRedis) checkLimit(ctx *Context, pn string, c redis.Conn
 type RateLimitFilterRedisCounter struct {
 	RedisPool    *redis.Pool
 	Count        int
-	KeySuffix    func() string
+	KeyFunc      func(req *SMSReq, i int) string
 	KeyExpireSec int
 }
 
-func NewRateLimitFilterRedisCounter(redisPool *redis.Pool, count int, keyExpireSec int, keySuffix func() string) *RateLimitFilterRedisCounter {
+func NewRateLimitFilterRedisCounter(redisPool *redis.Pool, count int, keyExpireSec int) *RateLimitFilterRedisCounter {
 	return &RateLimitFilterRedisCounter{
 		RedisPool:    redisPool,
 		Count:        count,
-		KeySuffix:    keySuffix,
 		KeyExpireSec: keyExpireSec,
 	}
 }
@@ -205,8 +213,11 @@ func (c *RateLimitFilterRedisCounter) Filter(ctx *Context, req *SMSReq, resp *SM
 	defer conn.Close()
 
 	for i := 0; i < len(req.PhoneNumbers); i++ {
-		pn := req.PhoneNumbers[i]
-		err := c.checkLimit(ctx, conn, pn)
+		key := req.PhoneNumbers[i]
+		if c.KeyFunc != nil {
+			key = c.KeyFunc(req, i)
+		}
+		err := c.checkLimit(ctx, conn, key)
 		if err != nil {
 			c.delPhone(req, resp, i, err.Error())
 			i--
@@ -216,8 +227,7 @@ func (c *RateLimitFilterRedisCounter) Filter(ctx *Context, req *SMSReq, resp *SM
 }
 
 // 这种实现在高并发下不能准确的限速，性能比RateLimitFilterRedis要好大约一倍
-func (c *RateLimitFilterRedisCounter) checkLimit(ctx *Context, conn redis.Conn, pn string) error {
-	key := pn + c.KeySuffix()
+func (c *RateLimitFilterRedisCounter) checkLimit(ctx *Context, conn redis.Conn, key string) error {
 	count, err := redis.Int(conn.Do("GET", key))
 
 	if err == nil && count >= c.Count {
@@ -250,5 +260,4 @@ func (c *RateLimitFilterRedisCounter) delPhone(req *SMSReq, resp *SMSResp, i int
 		FailReason:  reason,
 	})
 	req.PhoneNumbers = append(req.PhoneNumbers[:i], req.PhoneNumbers[i+1:]...)
-	req.Values = append(req.Values[:i], req.Values[i+1:]...)
 }

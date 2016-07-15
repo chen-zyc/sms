@@ -1,20 +1,19 @@
 package sms
 
 import (
-	"fmt"
 	"github.com/uber-go/zap"
 )
 
 type SMSReq struct {
 	Category     string
-	PhoneNumbers []string
 	TemplateID   string
-	Values       [][]string
+	PhoneNumbers []string
+	Args         []string
 }
 
 type SMSResp struct {
 	ID      string
-	Code    int
+	Code    int32
 	Message string
 	Fail    []FailReq
 }
@@ -48,12 +47,6 @@ func Send(ctx *Context, req *SMSReq) (resp *SMSResp) {
 
 	resp = &SMSResp{
 		ID: ctx.IDGen.Next(),
-	}
-
-	if pnl, vl := len(req.PhoneNumbers), len(req.Values); pnl != vl {
-		resp.Code = CodeInvalidParam
-		resp.Message = fmt.Sprintf("phoneNumbers.length(%d) != values.length(%d)", pnl, vl)
-		return
 	}
 
 	filtersRWM.RLock()

@@ -1,11 +1,9 @@
 package sms
 
 import (
-	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/zap"
-	"strings"
 	"testing"
 )
 
@@ -13,46 +11,24 @@ func getTestReq() *SMSReq {
 	return &SMSReq{
 		Category:     "test",
 		TemplateID:   "0000000",
-		PhoneNumbers: []string{"1000000", "1000001", "1000002"},
-		Values: [][]string{
-			strings.Split("v1,v2,v3", ","),
-			strings.Split("v4,v5,v6", ","),
-			strings.Split("v7,v8,v9", ","),
-		},
+		PhoneNumbers:[]string{"1000000", "1000001", "1000002"},
 	}
-}
-
-func TestSend_InvalidParam(t *testing.T) {
-	req := getTestReq()
-	req.Values = req.Values[:len(req.Values)-1] // 少一个参数
-
-	resp := Send(&Context{}, req)
-	require.NotEmpty(t, resp, "should not return empty response")
-	assert.Equal(t, CodeInvalidParam, resp.Code, "invalid param error code")
-	assert.Equal(t,
-		fmt.Sprintf("phoneNumbers.length(%d) != values.length(%d)", len(req.PhoneNumbers), len(req.Values)),
-		resp.Message,
-		"error message",
-	)
-	assert.Empty(t, resp.Fail, "no fail list")
 }
 
 func TestSend_Filter(t *testing.T) {
 	req := getTestReq()
 	RegisterFilter(req.Category, func(ctx *Context, req *SMSReq, resp *SMSResp) (exit bool) {
-		failPhone := req.PhoneNumbers[0]
-		req.PhoneNumbers = req.PhoneNumbers[1:]
-		req.Values = req.Values[1:]
 		resp.Fail = append(resp.Fail, FailReq{
-			PhoneNumber: failPhone,
+			PhoneNumber: req.PhoneNumbers[0],
 			FailReason:  "i don't know",
 		})
+		req.PhoneNumbers = req.PhoneNumbers[1:]
 		return
 	})
 	defer ResetFilters(req.Category, nil)
 
 	selector := &RandomSelector{}
-	selector.AddSender(req.Category, &mockSender{})
+	selector.AddSender(req.Category, &MockSender{})
 
 	logger := zap.NewJSON()
 	//logger.SetLevel(zap.DebugLevel)
