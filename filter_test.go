@@ -211,3 +211,53 @@ func BenchmarkRateLimitFilterRedisCounter_Filter(b *testing.B) {
 		filter.Filter(ctx, req, resp)
 	}
 }
+
+func TestContentFilter_Filter(t *testing.T) {
+	filter := &ContentFilter{}
+	temp, err := buildTestTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	RegisterTemplate(temp.TempID, temp)
+	defer RegisterTemplate(temp.TempID, nil)
+
+	ctx := &Context{
+		Logger: zap.NewJSON(),
+	}
+	ctx.Logger.SetLevel(zap.DebugLevel)
+	req := &SMSReq{
+		TemplateID: temp.TempID,
+		Args:       []string{"1234", "abc"},
+	}
+	resp := &SMSResp{}
+	filter.Filter(ctx, req, resp)
+
+	assert.Equal(t, "[1234] XX验证码，30分钟内有效【abc】", req.Content)
+}
+
+func BenchmarkContentFilter_Filter(b *testing.B) {
+	filter := &ContentFilter{}
+	temp, err := buildTestTemplate()
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	RegisterTemplate(temp.TempID, temp)
+	defer RegisterTemplate(temp.TempID, nil)
+
+	ctx := &Context{
+		Logger: zap.NewJSON(),
+	}
+	ctx.Logger.SetLevel(zap.DebugLevel)
+	req := &SMSReq{
+		TemplateID: temp.TempID,
+		Args:       []string{"1234", "abc"},
+	}
+	resp := &SMSResp{}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		filter.Filter(ctx, req, resp)
+	}
+}

@@ -9,6 +9,7 @@ type SMSReq struct {
 	TemplateID   string
 	PhoneNumbers []string
 	Args         []string
+	Content      string
 }
 
 type SMSResp struct {
@@ -51,9 +52,16 @@ func Send(ctx *Context, req *SMSReq) (resp *SMSResp) {
 
 	filtersRWM.RLock()
 	exit := false
-	for _, f := range filters[req.Category] {
+	for _, f := range filters[FilterGlobal] {
 		if exit = f(ctx, req, resp); exit {
 			break
+		}
+	}
+	if !exit {
+		for _, f := range filters[req.Category] {
+			if exit = f(ctx, req, resp); exit {
+				break
+			}
 		}
 	}
 	filtersRWM.RUnlock()

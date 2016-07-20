@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+const (
+	FilterGlobal = "_GLOBAL"
+)
+
 var filters = make(map[string][]Filter)
 var filtersRWM sync.RWMutex
 
@@ -260,4 +264,28 @@ func (c *RateLimitFilterRedisCounter) delPhone(req *SMSReq, resp *SMSResp, i int
 		FailReason:  reason,
 	})
 	req.PhoneNumbers = append(req.PhoneNumbers[:i], req.PhoneNumbers[i+1:]...)
+}
+
+type ContentFilter struct{}
+
+func (cf *ContentFilter) Filter(ctx *Context, req *SMSReq, resp *SMSResp) (exit bool) {
+	id := req.TemplateID
+	temp := FindTemplate(id)
+	if temp == nil {
+		resp.Code = CodeInvalidParam
+		resp.Message = "cann't find template:" + id
+		exit = true
+		return
+	}
+
+	content, err := temp.SMSContent(req.Args)
+	if err != nil {
+		resp.Code = CodeInvalidParam
+		resp.Message = err.Error()
+		exit = true
+		return
+	}
+
+	req.Content = content
+	return
 }
