@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"sync"
 )
 
@@ -84,4 +85,11 @@ func (rc *RegexpChecker) Check(v string) error {
 		return errors.New("invalid arg:" + v)
 	}
 	return nil
+}
+
+type IntChecker struct{}
+
+func (ic *IntChecker) Check(v string) error {
+	_, err := strconv.ParseInt(v, 10, 64)
+	return err
 }
