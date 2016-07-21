@@ -38,7 +38,7 @@ func SendSMSTest() {
 		}
 		rateLimitFilter := sms.NewRateLimitFilterRedis(pool, 5, 3, 10*time.Second)
 		rateLimitFilter.KeyExpireSec = 30
-		sms.RegisterFilter("test", sms.Filter(rateLimitFilter.Filter))
+		sms.RegisterFilter("test", rateLimitFilter.FilterFunc())
 
 		err := sms_grpc.RunSMSServer(&sms.Context{
 			Selector: selector,

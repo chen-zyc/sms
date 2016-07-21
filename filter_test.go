@@ -47,14 +47,14 @@ func TestRateLimitFilterRedis_Filter(t *testing.T) {
 
 	sucCount := 0
 	for i := 0; i < 5; i++ {
-		resp := &SMSResp{}
 		req := &SMSReq{
 			PhoneNumbers: []string{"123"},
 		}
-		filter.Filter(ctx, req, resp)
-		if len(resp.Fail) == 0 {
+		pns, failed := filter.Filter(ctx, req)
+		if len(failed) == 0 {
 			sucCount++
 		}
+		assert.Equal(t, 1, len(pns)+len(failed))
 	}
 
 	assert.Equal(t, 3, sucCount)
@@ -80,12 +80,11 @@ func TestRateLimitFilterRedis_Concurrence(t *testing.T) {
 			ctx.Logger.SetLevel(zap.InfoLevel)
 
 			for i := 0; i < 500; i++ {
-				resp := &SMSResp{}
 				req := &SMSReq{
 					PhoneNumbers: []string{"124"},
 				}
-				filter.Filter(ctx, req, resp)
-				if len(resp.Fail) == 0 {
+				_, failed := filter.Filter(ctx, req)
+				if len(failed) == 0 {
 					atomic.AddInt64(&sucCount, 1)
 				}
 			}
@@ -110,11 +109,10 @@ func BenchmarkRateLimitFilterRedis_Filter(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		resp := &SMSResp{}
 		req := &SMSReq{
 			PhoneNumbers: []string{"125"},
 		}
-		filter.Filter(ctx, req, resp)
+		filter.Filter(ctx, req)
 	}
 }
 
@@ -135,12 +133,11 @@ func TestRateLimitFilterRedisCounter_Filter(t *testing.T) {
 
 	sucCount := 0
 	for i := 0; i < 5; i++ {
-		resp := &SMSResp{}
 		req := &SMSReq{
 			PhoneNumbers: []string{"1234"},
 		}
-		filter.Filter(ctx, req, resp)
-		if len(resp.Fail) == 0 {
+		_, failed := filter.Filter(ctx, req)
+		if len(failed) == 0 {
 			sucCount++
 		}
 	}
@@ -170,12 +167,11 @@ func TestRateLimitFilterRedisCounter_Concurrence(t *testing.T) {
 			ctx.Logger.SetLevel(zap.DebugLevel)
 
 			for i := 0; i < 10; i++ {
-				resp := &SMSResp{}
 				req := &SMSReq{
 					PhoneNumbers: []string{"1235"},
 				}
-				filter.Filter(ctx, req, resp)
-				if len(resp.Fail) == 0 {
+				_, failed := filter.Filter(ctx, req)
+				if len(failed) == 0 {
 					atomic.AddInt64(&sucCount, 1)
 				}
 			}
@@ -204,11 +200,10 @@ func BenchmarkRateLimitFilterRedisCounter_Filter(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		resp := &SMSResp{}
 		req := &SMSReq{
 			PhoneNumbers: []string{"1236"},
 		}
-		filter.Filter(ctx, req, resp)
+		filter.Filter(ctx, req)
 	}
 }
 
@@ -226,14 +221,9 @@ func TestContentFilter_Filter(t *testing.T) {
 		Logger: zap.NewJSON(),
 	}
 	ctx.Logger.SetLevel(zap.DebugLevel)
-	req := &SMSReq{
-		TemplateID: temp.TempID,
-		Args:       []string{"1234", "abc"},
-	}
-	resp := &SMSResp{}
-	filter.Filter(ctx, req, resp)
+	content, err := filter.Filter(temp.TempID, []string{"1234", "abc"})
 
-	assert.Equal(t, "[1234] XX验证码，30分钟内有效【abc】", req.Content)
+	assert.Equal(t, "[1234] XX验证码，30分钟内有效【abc】", content)
 }
 
 func BenchmarkContentFilter_Filter(b *testing.B) {
@@ -250,14 +240,9 @@ func BenchmarkContentFilter_Filter(b *testing.B) {
 		Logger: zap.NewJSON(),
 	}
 	ctx.Logger.SetLevel(zap.DebugLevel)
-	req := &SMSReq{
-		TemplateID: temp.TempID,
-		Args:       []string{"1234", "abc"},
-	}
-	resp := &SMSResp{}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		filter.Filter(ctx, req, resp)
+		filter.Filter(temp.TempID, []string{"1234", "abc"})
 	}
 }

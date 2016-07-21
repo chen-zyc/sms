@@ -68,12 +68,26 @@ func NewRateLimitFilterRedis(redisPool *redis.Pool, maxTokens, tokens int64, per
 	}
 }
 
-func (rl *RateLimitFilterRedis) Filter(ctx *Context, req *SMSReq, resp *SMSResp) (exit bool) {
+func (rl *RateLimitFilterRedis) FilterFunc() Filter {
+	return func(ctx *Context, req *SMSReq, resp *SMSResp) (exit bool) {
+		pns, failed := rl.Filter(ctx, req)
+		req.PhoneNumbers = pns
+		resp.Fail = append(resp.Fail, failed...)
+		return len(pns) == 0
+	}
+}
+
+func (rl *RateLimitFilterRedis) Filter(ctx *Context, req *SMSReq) ([]string, []FailReq) {
 	if rl.RedisPool == nil {
-		return
+		return req.PhoneNumbers, nil
 	}
 	c := rl.RedisPool.Get()
 	defer c.Close()
+
+	var (
+		newNumbers = make([]string, 0, len(req.PhoneNumbers))
+		failed     []FailReq
+	)
 
 LOOP:
 	for i := 0; i < len(req.PhoneNumbers); i++ {
@@ -85,11 +99,14 @@ LOOP:
 		for j := 0; j < rl.MaxTryTimes; j++ {
 			err = rl.checkLimit(ctx, key, c)
 			if err == nil {
+				newNumbers = append(newNumbers, req.PhoneNumbers[i])
 				continue LOOP
 			}
 			if err == ErrExceedLimit {
-				rl.delPhone(req, resp, i, err.Error())
-				i--
+				failed = append(failed, FailReq{
+					PhoneNumber: req.PhoneNumbers[i],
+					FailReason:  err.Error(),
+				})
 				continue LOOP
 			}
 			if err == ErrTryAgain {
@@ -98,21 +115,18 @@ LOOP:
 		}
 		// 超过最大次数还是有错误
 		if err != nil {
-			rl.delPhone(req, resp, i, err.Error())
+			failed = append(failed, FailReq{
+				PhoneNumber: req.PhoneNumbers[i],
+				FailReason:  err.Error(),
+			})
 		} else {
-			rl.delPhone(req, resp, i, "cann't acquire access,max try times:"+strconv.Itoa(rl.MaxTryTimes))
+			failed = append(failed, FailReq{
+				PhoneNumber: req.PhoneNumbers[i],
+				FailReason:  "cann't acquire access,max try times:" + strconv.Itoa(rl.MaxTryTimes),
+			})
 		}
-		i--
 	}
-	return
-}
-
-func (rl *RateLimitFilterRedis) delPhone(req *SMSReq, resp *SMSResp, i int, reason string) {
-	resp.Fail = append(resp.Fail, FailReq{
-		PhoneNumber: req.PhoneNumbers[i],
-		FailReason:  reason,
-	})
-	req.PhoneNumbers = append(req.PhoneNumbers[:i], req.PhoneNumbers[i+1:]...)
+	return newNumbers, failed
 }
 
 // 这种实现在高并发下也可以做到准确限速，缺点是执行的redis命令多，性能略低
@@ -209,12 +223,26 @@ func NewRateLimitFilterRedisCounter(redisPool *redis.Pool, count int, keyExpireS
 	}
 }
 
-func (c *RateLimitFilterRedisCounter) Filter(ctx *Context, req *SMSReq, resp *SMSResp) (exit bool) {
+func (c *RateLimitFilterRedisCounter) FilterFunc() Filter {
+	return func(ctx *Context, req *SMSReq, resp *SMSResp) (exit bool) {
+		pns, failed := c.Filter(ctx, req)
+		req.PhoneNumbers = pns
+		resp.Fail = append(resp.Fail, failed...)
+		return len(pns) == 0
+	}
+}
+
+func (c *RateLimitFilterRedisCounter) Filter(ctx *Context, req *SMSReq) ([]string, []FailReq) {
 	if c.RedisPool == nil {
-		return
+		return req.PhoneNumbers, nil
 	}
 	conn := c.RedisPool.Get()
 	defer conn.Close()
+
+	var (
+		newNumbers = make([]string, 0, len(req.PhoneNumbers))
+		failed     []FailReq
+	)
 
 	for i := 0; i < len(req.PhoneNumbers); i++ {
 		key := req.PhoneNumbers[i]
@@ -223,11 +251,15 @@ func (c *RateLimitFilterRedisCounter) Filter(ctx *Context, req *SMSReq, resp *SM
 		}
 		err := c.checkLimit(ctx, conn, key)
 		if err != nil {
-			c.delPhone(req, resp, i, err.Error())
-			i--
+			failed = append(failed, FailReq{
+				PhoneNumber: req.PhoneNumbers[i],
+				FailReason:  err.Error(),
+			})
+		} else {
+			newNumbers = append(newNumbers, req.PhoneNumbers[i])
 		}
 	}
-	return
+	return newNumbers, failed
 }
 
 // 这种实现在高并发下不能准确的限速，性能比RateLimitFilterRedis要好大约一倍
@@ -258,34 +290,27 @@ func (c *RateLimitFilterRedisCounter) checkLimit(ctx *Context, conn redis.Conn, 
 	return nil
 }
 
-func (c *RateLimitFilterRedisCounter) delPhone(req *SMSReq, resp *SMSResp, i int, reason string) {
-	resp.Fail = append(resp.Fail, FailReq{
-		PhoneNumber: req.PhoneNumbers[i],
-		FailReason:  reason,
-	})
-	req.PhoneNumbers = append(req.PhoneNumbers[:i], req.PhoneNumbers[i+1:]...)
-}
-
 type ContentFilter struct{}
 
-func (cf *ContentFilter) Filter(ctx *Context, req *SMSReq, resp *SMSResp) (exit bool) {
-	id := req.TemplateID
-	temp := FindTemplate(id)
+func (cf *ContentFilter) FilterFunc() Filter {
+	return func(ctx *Context, req *SMSReq, resp *SMSResp) (exit bool) {
+		content, err := cf.Filter(req.TemplateID, req.Args)
+		if err != nil {
+			resp.Code = CodeInvalidParam
+			resp.Message = err.Error()
+			return false
+		}
+		req.Content = content
+		return true
+	}
+}
+
+func (cf *ContentFilter) Filter(templateID string, args []string) (content string, err error) {
+	temp := FindTemplate(templateID)
 	if temp == nil {
-		resp.Code = CodeInvalidParam
-		resp.Message = "cann't find template:" + id
-		exit = true
-		return
+		return "", errors.New("cann't find template:" + templateID)
 	}
 
-	content, err := temp.SMSContent(req.Args)
-	if err != nil {
-		resp.Code = CodeInvalidParam
-		resp.Message = err.Error()
-		exit = true
-		return
-	}
-
-	req.Content = content
+	content, err = temp.SMSContent(args)
 	return
 }
