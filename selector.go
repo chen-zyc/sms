@@ -28,6 +28,7 @@ func (rs *RandomSelector) Select(category string) (sender Sender, errCode int32,
 }
 
 func (rs *RandomSelector) AddSender(category string, s Sender) {
+	rs.Lock()
 	if rs.senders == nil {
 		rs.senders = make(map[string][]Sender)
 	}
@@ -37,4 +38,5 @@ func (rs *RandomSelector) AddSender(category string, s Sender) {
 	} else {
 		rs.senders[category] = []Sender{s}
 	}
+	rs.Unlock()
 }

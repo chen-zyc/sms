@@ -14,7 +14,8 @@ import (
 func buildTestRedisPool() *redis.Pool {
 	pool := &redis.Pool{
 		MaxIdle:     10,
-		IdleTimeout: 10 * time.Second,
+		MaxActive:   50,
+		IdleTimeout: 1 * time.Second,
 		Dial: func() (c redis.Conn, err error) {
 			c, err = redis.DialTimeout("tcp", "127.0.0.1:6379", 5*time.Second, 3*time.Second, 5*time.Second)
 			if err != nil {

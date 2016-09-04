@@ -7,8 +7,8 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"log"
-	"sms"
-	"sms/sms_grpc"
+	"github.com/zhangyuchen0411/sms"
+	"github.com/zhangyuchen0411/sms/sms_grpc"
 	"time"
 )
 
